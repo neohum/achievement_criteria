@@ -5,6 +5,8 @@ import { AchievementCriteria, BoardCard, BoardEdge } from '@/types';
 import { useNodesState, useEdgesState, addEdge, applyEdgeChanges, Connection, Edge, EdgeChange, NodeChange, Node } from '@xyflow/react';
 import { toast } from 'sonner';
 import { useWebSocket } from '@/hooks/useWebSocket';
+import * as Y from 'yjs';
+import { WebsocketProvider } from 'y-websocket';
 
 export interface RemoteCursor {
     sessionId: string;
@@ -14,6 +16,9 @@ export interface RemoteCursor {
     dragging?: boolean;
     dragCardId?: string;
     dragCardTitle?: string;
+    connecting?: boolean;
+    connectSourceNodeId?: string;
+    connectSourceHandleId?: string;
     lastUpdate: number;
 }
 
@@ -46,7 +51,11 @@ interface BoardContextType {
     sendCursorPosition: (flowX: number, flowY: number) => void;
     sendDragStart: (cardId: string, cardTitle: string) => void;
     sendDragEnd: () => void;
+    sendConnectStart: (nodeId: string, handleId: string) => void;
+    sendConnectEnd: () => void;
     isWsConnected: boolean;
+    yMemos: Y.Map<Y.Text> | null;
+    yjsSynced: boolean;
 }
 
 const BoardContext = createContext<BoardContextType | undefined>(undefined);
@@ -78,6 +87,46 @@ export function BoardProvider({ children, initialCriteria, boardId }: { children
 
     // Throttle ref for cursor position
     const lastCursorSendRef = useRef(0);
+
+    // ── Yjs setup for collaborative memo editing ──
+    const yDocRef = useRef<Y.Doc | null>(null);
+    const yProviderRef = useRef<WebsocketProvider | null>(null);
+    const [yMemos, setYMemos] = useState<Y.Map<Y.Text> | null>(null);
+    const [yjsSynced, setYjsSynced] = useState(false);
+
+    useEffect(() => {
+        if (!boardId) return;
+
+        const doc = new Y.Doc();
+        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+        const wsUrl = `${protocol}//${window.location.host}/y-ws`;
+        const roomName = `board-memo-${boardId}`;
+
+        const provider = new WebsocketProvider(wsUrl, roomName, doc);
+
+        yDocRef.current = doc;
+        yProviderRef.current = provider;
+
+        const memos = doc.getMap<Y.Text>("memos");
+        setYMemos(memos);
+
+        provider.on('sync', (synced: boolean) => {
+            if (synced) setYjsSynced(true);
+        });
+
+        return () => {
+            // Clear state references first so React components see null
+            setYMemos(null);
+            setYjsSynced(false);
+            yDocRef.current = null;
+            yProviderRef.current = null;
+            // Defer destruction so components can clean up
+            setTimeout(() => {
+                provider.destroy();
+                doc.destroy();
+            }, 0);
+        };
+    }, [boardId]);
 
     // Update sequence numbers for all edges whenever edges change
     const updateEdgeSequences = useCallback((currentEdges: Edge[]) => {
@@ -131,15 +180,21 @@ export function BoardProvider({ children, initialCriteria, boardId }: { children
                 // Board data update from another user — block autosave for 2s
                 lastRemoteUpdateRef.current = Date.now();
                 if (msg.cards) {
-                    const flowNodes: Node[] = msg.cards.map((c: BoardCard) => ({
-                        id: c.id,
-                        type: 'criteriaNode',
-                        position: c.position || { x: 50, y: 50 },
-                        data: {
-                            criteria: c.criteria,
-                            memo: c.memo || ""
-                        }
-                    }));
+                    const currentYMemos = yDocRef.current?.getMap<Y.Text>("memos") ?? null;
+                    const flowNodes: Node[] = msg.cards.map((c: BoardCard) => {
+                        // If Yjs has this card's memo, use Yjs text as source of truth
+                        const yText = currentYMemos?.get(c.id);
+                        const memo = yText ? yText.toString() : (c.memo || "");
+                        return {
+                            id: c.id,
+                            type: 'criteriaNode',
+                            position: c.position || { x: 50, y: 50 },
+                            data: {
+                                criteria: c.criteria,
+                                memo
+                            }
+                        };
+                    });
                     setNodes(flowNodes);
                 }
                 if (msg.edges) {
@@ -208,6 +263,40 @@ export function BoardProvider({ children, initialCriteria, boardId }: { children
                 });
                 break;
             }
+            case 'connect-start': {
+                setRemoteCursors(prev => {
+                    const next = new Map(prev);
+                    const existing = next.get(msg.sessionId);
+                    if (existing) {
+                        next.set(msg.sessionId, {
+                            ...existing,
+                            connecting: true,
+                            connectSourceNodeId: msg.nodeId,
+                            connectSourceHandleId: msg.handleId,
+                            lastUpdate: Date.now(),
+                        });
+                    }
+                    return next;
+                });
+                break;
+            }
+            case 'connect-end': {
+                setRemoteCursors(prev => {
+                    const next = new Map(prev);
+                    const existing = next.get(msg.sessionId);
+                    if (existing) {
+                        next.set(msg.sessionId, {
+                            ...existing,
+                            connecting: false,
+                            connectSourceNodeId: undefined,
+                            connectSourceHandleId: undefined,
+                            lastUpdate: Date.now(),
+                        });
+                    }
+                    return next;
+                });
+                break;
+            }
             case 'cursor-leave': {
                 setRemoteCursors(prev => {
                     const next = new Map(prev);
@@ -238,6 +327,14 @@ export function BoardProvider({ children, initialCriteria, boardId }: { children
 
     const sendDragEnd = useCallback(() => {
         send({ type: 'drag-end' });
+    }, [send]);
+
+    const sendConnectStart = useCallback((nodeId: string, handleId: string) => {
+        send({ type: 'connect-start', nodeId, handleId });
+    }, [send]);
+
+    const sendConnectEnd = useCallback(() => {
+        send({ type: 'connect-end' });
     }, [send]);
 
     // Stale cursor cleanup (10 seconds)
@@ -274,15 +371,21 @@ export function BoardProvider({ children, initialCriteria, boardId }: { children
             .then(data => {
                 if (data.cards && data.cards.length > 0) {
                     lastRemoteUpdateRef.current = Date.now();
-                    const flowNodes: Node[] = data.cards.map((c: BoardCard, index: number) => ({
-                        id: c.id,
-                        type: 'criteriaNode',
-                        position: c.position || { x: 50, y: 50 + index * 100 },
-                        data: {
-                            criteria: c.criteria,
-                            memo: c.memo || ""
-                        }
-                    }));
+                    const currentYMemos = yDocRef.current?.getMap<Y.Text>("memos") ?? null;
+                    const flowNodes: Node[] = data.cards.map((c: BoardCard, index: number) => {
+                        // If Yjs already has this card's memo, use it as source of truth
+                        const yText = currentYMemos?.get(c.id);
+                        const memo = yText ? yText.toString() : (c.memo || "");
+                        return {
+                            id: c.id,
+                            type: 'criteriaNode',
+                            position: c.position || { x: 50, y: 50 + index * 100 },
+                            data: {
+                                criteria: c.criteria,
+                                memo
+                            }
+                        };
+                    });
                     setNodes(flowNodes);
                 }
 
@@ -305,53 +408,39 @@ export function BoardProvider({ children, initialCriteria, boardId }: { children
         // SSE is no longer needed — WebSocket handles real-time sync
     }, [boardId, setNodes, setEdges, updateEdgeSequences]);
 
-    // Autosave effect with debounce
+    // Helper to convert current state to DB format
+    const toBoardData = useCallback(() => {
+        const boardCards: BoardCard[] = nodes.map(n => ({
+            id: n.id,
+            position: n.position,
+            criteria: n.data.criteria as AchievementCriteria,
+            memo: (n.data.memo as string) || ""
+        }));
+        const boardEdges: BoardEdge[] = edges.map(e => ({
+            id: e.id,
+            source: e.source,
+            target: e.target,
+            sourceHandle: e.sourceHandle,
+            targetHandle: e.targetHandle
+        }));
+        return { boardCards, boardEdges };
+    }, [nodes, edges]);
+
+    // Sync via WS (100ms throttle) — WS server handles Redis save + broadcast + periodic Postgres flush
     useEffect(() => {
         if (!isMounted || !boardId || !sessionId) return;
-
-        // Skip save if this change came from a remote update (within 2s window)
-        if (Date.now() - lastRemoteUpdateRef.current < 2000) return;
+        if (Date.now() - lastRemoteUpdateRef.current < 500) return;
 
         setSaveStatus('saving');
         const timer = setTimeout(() => {
-            // Double-check before actually saving — remote update may have arrived during debounce
-            if (Date.now() - lastRemoteUpdateRef.current < 2000) return;
-            // Convert to DB format
-            const boardCards: BoardCard[] = nodes.map(n => ({
-                id: n.id,
-                position: n.position,
-                criteria: n.data.criteria as AchievementCriteria,
-                memo: (n.data.memo as string) || ""
-            }));
-
-            const boardEdges: BoardEdge[] = edges.map(e => ({
-                id: e.id,
-                source: e.source,
-                target: e.target,
-                sourceHandle: e.sourceHandle,
-                targetHandle: e.targetHandle
-            }));
-
-            fetch('/api/board', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ boardId, sessionId, cards: boardCards, edges: boardEdges })
-            })
-                .then(res => {
-                    if (res.ok) setSaveStatus('saved');
-                    else {
-                        setSaveStatus('error');
-                        toast.error("저장에 실패했습니다.");
-                    }
-                })
-                .catch(() => {
-                    setSaveStatus('error');
-                    toast.error("저장에 실패했습니다.");
-                });
-        }, 1000); // 1s debounce
+            if (Date.now() - lastRemoteUpdateRef.current < 500) return;
+            const { boardCards, boardEdges } = toBoardData();
+            send({ type: 'board-update', cards: boardCards, edges: boardEdges });
+            setSaveStatus('saved');
+        }, 100);
 
         return () => clearTimeout(timer);
-    }, [nodes, edges, sessionId, isMounted]);
+    }, [nodes, edges, sessionId, isMounted, boardId, send, toBoardData]);
 
     const availableGradeGroups = useMemo(() => {
         const groups = new Set<string>();
@@ -428,8 +517,10 @@ export function BoardProvider({ children, initialCriteria, boardId }: { children
             updateMemo, removeNode,
             saveStatus, activeUsers,
             remoteCursors, myColor,
-            sendCursorPosition, sendDragStart, sendDragEnd,
+            sendCursorPosition, sendDragStart, sendDragEnd, sendConnectStart, sendConnectEnd,
             isWsConnected,
+            yMemos,
+            yjsSynced,
         }}>
             {children}
         </BoardContext.Provider>

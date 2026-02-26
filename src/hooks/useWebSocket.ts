@@ -8,6 +8,9 @@ interface UseWebSocketOptions {
   onMessage: (msg: any) => void;
 }
 
+// Unique connection ID per tab instance
+const connId = `conn-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
 export function useWebSocket({ boardId, sessionId, onMessage }: UseWebSocketOptions) {
   const [isConnected, setIsConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
@@ -28,7 +31,7 @@ export function useWebSocket({ boardId, sessionId, onMessage }: UseWebSocketOpti
       if (disposed) return;
 
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const url = `${protocol}//${window.location.host}/ws?boardId=${encodeURIComponent(boardId)}&sessionId=${encodeURIComponent(sessionId)}`;
+      const url = `${protocol}//${window.location.host}/ws?boardId=${encodeURIComponent(boardId)}&sessionId=${encodeURIComponent(sessionId)}&connId=${encodeURIComponent(connId)}`;
 
       const ws = new WebSocket(url);
       wsRef.current = ws;

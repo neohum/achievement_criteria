@@ -26,7 +26,7 @@ const edgeTypes = {
 };
 
 export default function MainBoard() {
-    const { nodes, edges, onNodesChange, onEdgesChange, onConnect, setNodes, sendCursorPosition, sendDragStart, sendDragEnd } = useBoard();
+    const { nodes, edges, onNodesChange, onEdgesChange, onConnect, setNodes, sendCursorPosition, sendDragStart, sendDragEnd, sendConnectStart, sendConnectEnd } = useBoard();
     const reactFlowWrapper = useRef<HTMLDivElement>(null);
     const { screenToFlowPosition } = useReactFlow();
 
@@ -77,6 +77,16 @@ export default function MainBoard() {
         sendDragEnd();
     }, [sendDragEnd]);
 
+    const handleConnectStart = useCallback((_event: MouseEvent | TouchEvent, params: { nodeId: string | null; handleId: string | null }) => {
+        if (params.nodeId && params.handleId) {
+            sendConnectStart(params.nodeId, params.handleId);
+        }
+    }, [sendConnectStart]);
+
+    const handleConnectEnd = useCallback(() => {
+        sendConnectEnd();
+    }, [sendConnectEnd]);
+
     return (
         <main className="flex-1 bg-gray-100 p-0 md:p-4 overflow-hidden relative h-[55%] md:h-auto flex flex-col">
             <div className="w-full flex justify-between items-center px-4 py-2 bg-white/50 backdrop-blur border-b border-gray-200 z-10 shrink-0">
@@ -106,6 +116,8 @@ export default function MainBoard() {
                     onMouseMove={onMouseMove}
                     onNodeDragStart={onNodeDragStart}
                     onNodeDragStop={onNodeDragStop}
+                    onConnectStart={handleConnectStart}
+                    onConnectEnd={handleConnectEnd}
                     fitView
                     fitViewOptions={{ padding: 0.2 }}
                     minZoom={0.2}
