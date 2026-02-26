@@ -22,13 +22,26 @@ model Session {
 }
 
 model Board {
-  id        String   @id @default(uuid())
-  title     String   @default("새 성취기준 보드")
-  data      Json     @default("[]") // Array of BoardCard objects
+  id         String   @id @default(uuid())
+  title      String   @default("새 성취기준 보드")
+  data       Json     @default("[]") // Array of BoardCard objects
+  shareCode  String?  @unique // 6자리 숫자 접속번호
+
+  sessionId  String
+  session    Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model AchievementCriteria {
+  id             String @id @default(uuid())
+  gradeGroup     String // e.g., "3~4", "5~6"
+  subject        String // e.g., "국어", "수학"
+  domain         String // e.g., "듣기·말하기"
+  contentElement String // e.g., "대화의 예절"
+  code           String @unique // e.g., "4국01-01"
+  description    String // The actual criteria text
   
-  sessionId String
-  session   Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  @@index([gradeGroup, subject])
 }

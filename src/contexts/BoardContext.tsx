@@ -3,8 +3,10 @@
 import React, { createContext, useContext, useState, useMemo, useEffect, useRef } from 'react';
 import { AchievementCriteria, BoardCard } from '@/types';
 import { DragDropContext, DropResult } from '@hello-pangea/dnd';
+import { toast } from 'sonner';
 
 interface BoardContextType {
+    boardId: string;
     allCriteria: AchievementCriteria[];
     gradeGroupFilter: string;
     setGradeGroupFilter: (v: string) => void;
@@ -25,6 +27,12 @@ interface BoardContextType {
 }
 
 const BoardContext = createContext<BoardContextType | undefined>(undefined);
+
+// 3~5, 3~6, 3~7 등을 모두 "3~4"로 통합
+function normalizeGradeGroup(g: string): string {
+    if (/^3~[4-9]$/.test(g)) return "3~4";
+    return g;
+}
 
 export function BoardProvider({ children, initialCriteria, boardId }: { children: React.ReactNode; initialCriteria: AchievementCriteria[]; boardId: string }) {
     const [allCriteria] = useState(initialCriteria);
@@ -57,7 +65,7 @@ export function BoardProvider({ children, initialCriteria, boardId }: { children
                     setBoardCards(data.cards);
                 }
             })
-            .catch(err => console.error("Failed to load initial board state", err));
+            .catch(() => toast.error("보드 데이터를 불러오는데 실패했습니다."));
 
         // Setup SSE for real-time sync with presence
         const eventSource = new EventSource(`/api/board/stream?boardId=${boardId}&sessionId=${sid}`);
@@ -100,9 +108,15 @@ export function BoardProvider({ children, initialCriteria, boardId }: { children
             })
                 .then(res => {
                     if (res.ok) setSaveStatus('saved');
-                    else setSaveStatus('error');
+                    else {
+                        setSaveStatus('error');
+                        toast.error("저장에 실패했습니다.");
+                    }
                 })
-                .catch(() => setSaveStatus('error'));
+                .catch(() => {
+                    setSaveStatus('error');
+                    toast.error("저장에 실패했습니다.");
+                });
         }, 1000); // 1s debounce
 
         return () => clearTimeout(timer);
@@ -111,7 +125,7 @@ export function BoardProvider({ children, initialCriteria, boardId }: { children
     const availableGradeGroups = useMemo(() => {
         const groups = new Set<string>();
         allCriteria.forEach(c => {
-            if (c.gradeGroup) groups.add(c.gradeGroup);
+            if (c.gradeGroup) groups.add(normalizeGradeGroup(c.gradeGroup));
         });
         return Array.from(groups).sort();
     }, [allCriteria]);
@@ -120,7 +134,7 @@ export function BoardProvider({ children, initialCriteria, boardId }: { children
         if (!gradeGroupFilter) return [];
         const subjects = new Set<string>();
         allCriteria.forEach(c => {
-            if (c.gradeGroup === gradeGroupFilter) subjects.add(c.subject);
+            if (normalizeGradeGroup(c.gradeGroup) === gradeGroupFilter) subjects.add(c.subject);
         });
         return Array.from(subjects);
     }, [allCriteria, gradeGroupFilter]);
@@ -129,7 +143,7 @@ export function BoardProvider({ children, initialCriteria, boardId }: { children
         if (!gradeGroupFilter || !subjectFilter) return [];
         const domains = new Set<string>();
         allCriteria.forEach(c => {
-            if (c.gradeGroup === gradeGroupFilter && c.subject === subjectFilter && c.domain) {
+            if (normalizeGradeGroup(c.gradeGroup) === gradeGroupFilter && c.subject === subjectFilter && c.domain) {
                 domains.add(c.domain);
             }
         });
@@ -138,7 +152,7 @@ export function BoardProvider({ children, initialCriteria, boardId }: { children
 
     const filteredCriteria = useMemo(() => {
         return allCriteria.filter(c =>
-            (gradeGroupFilter ? c.gradeGroup === gradeGroupFilter : true) &&
+            (gradeGroupFilter ? normalizeGradeGroup(c.gradeGroup) === gradeGroupFilter : true) &&
             (subjectFilter ? c.subject === subjectFilter : true) &&
             (domainFilter ? c.domain === domainFilter : true)
         );
@@ -205,6 +219,7 @@ export function BoardProvider({ children, initialCriteria, boardId }: { children
 
     return (
         <BoardContext.Provider value={{
+            boardId,
             allCriteria,
             gradeGroupFilter, setGradeGroupFilter,
             subjectFilter, setSubjectFilter,
