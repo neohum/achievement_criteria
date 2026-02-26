@@ -5,10 +5,11 @@ import Link from "next/link";
 import { useBoard } from "@/contexts/BoardContext";
 import * as XLSX from "xlsx";
 import QRCode from "qrcode";
+import { AchievementCriteria } from '@/types';
 import { toast } from "sonner";
 
 export default function TopBar() {
-  const { saveStatus, boardCards, activeUsers, boardId } = useBoard();
+  const { saveStatus, nodes, activeUsers, boardId, isWsConnected } = useBoard();
   const [showShareModal, setShowShareModal] = useState(false);
   const [shareCode, setShareCode] = useState<string | null>(null);
   const [shareLoading, setShareLoading] = useState(false);
@@ -16,15 +17,18 @@ export default function TopBar() {
   const modalRef = useRef<HTMLDivElement>(null);
 
   const handleExport = () => {
-    const exportData = boardCards.map((card, idx) => ({
-      순서: idx + 1,
-      학년군: card.criteria.gradeGroup,
-      교과: card.criteria.subject,
-      영역: card.criteria.domain,
-      성취기준코드: card.criteria.code,
-      성취기준: card.criteria.description,
-      메모: card.memo || "",
-    }));
+    const exportData = nodes.map((node, idx) => {
+      const criteria = node.data.criteria as AchievementCriteria | undefined;
+      return {
+        순서: idx + 1,
+        학년군: criteria?.gradeGroup || "",
+        교과: criteria?.subject || "",
+        영역: criteria?.domain || "",
+        성취기준코드: criteria?.code || "",
+        성취기준: criteria?.description || "",
+        사용자메모: (node.data.memo as string) || ""
+      };
+    });
 
     const worksheet = XLSX.utils.json_to_sheet(exportData);
     const workbook = XLSX.utils.book_new();
@@ -116,7 +120,7 @@ export default function TopBar() {
         <div className="flex items-center gap-2 md:gap-4 overflow-x-auto hide-scrollbar pl-2">
 
           {/* Presence indicator */}
-          {activeUsers.length > 0 && (
+          {isWsConnected && activeUsers.length > 0 ? (
             <div className="flex items-center gap-1.5 px-2 py-1 md:px-3 md:py-1.5 bg-blue-50 text-blue-600 rounded-full text-xs md:text-sm font-bold shadow-sm border border-blue-100/50 whitespace-nowrap">
               <span className="relative flex h-2 w-2">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
@@ -125,7 +129,12 @@ export default function TopBar() {
               <span className="hidden md:inline">{activeUsers.length}명 접속 중</span>
               <span className="md:hidden">{activeUsers.length}명</span>
             </div>
-          )}
+          ) : !isWsConnected ? (
+            <div className="flex items-center gap-1.5 px-2 py-1 md:px-3 md:py-1.5 bg-gray-100 text-gray-500 rounded-full text-xs md:text-sm font-medium whitespace-nowrap">
+              <span className="w-2 h-2 rounded-full bg-gray-400 animate-pulse"></span>
+              <span className="hidden md:inline">연결 중...</span>
+            </div>
+          ) : null}
 
           {/* Autosave indicator */}
           <div className="flex items-center gap-1.5 md:gap-2 text-xs md:text-sm text-gray-500 transition-opacity whitespace-nowrap">
@@ -158,7 +167,7 @@ export default function TopBar() {
 
           <button
             onClick={handleExport}
-            disabled={boardCards.length === 0}
+            disabled={nodes.length === 0}
             className="px-2.5 py-1.5 md:px-4 md:py-2 bg-gray-900 text-white rounded-md text-xs md:text-sm font-medium hover:bg-gray-800 disabled:bg-gray-400 transition-colors shadow-sm whitespace-nowrap shrink-0"
           >
             <span className="hidden sm:inline">엑셀 다운로드</span>

@@ -3,15 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "node server.js",
     "build": "next build",
-    "start": "next start",
+    "start": "NODE_ENV=production node server.js",
     "lint": "eslint"
   },
   "dependencies": {
     "@hello-pangea/dnd": "^18.0.1",
     "@prisma/client": "^6.19.2",
     "@types/qrcode": "^1.5.6",
+    "@xyflow/react": "^12.10.1",
     "bufferutil": "^4.1.0",
     "ioredis": "^5.9.3",
     "next": "16.1.6",

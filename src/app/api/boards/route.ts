@@ -10,9 +10,8 @@ export async function GET(req: Request) {
             return NextResponse.json({ error: 'Missing sessionId' }, { status: 400 });
         }
 
-        // Fetch boards associated with the session
+        // Fetch all boards (owned or visited)
         const boards = await prisma.board.findMany({
-            where: { sessionId },
             orderBy: { updatedAt: 'desc' },
             select: { id: true, title: true, updatedAt: true, createdAt: true }
         });
@@ -21,6 +20,24 @@ export async function GET(req: Request) {
     } catch (error) {
         console.error('Fetch Boards API Error:', error);
         return NextResponse.json({ error: 'Failed to load boards' }, { status: 500 });
+    }
+}
+
+export async function DELETE(req: Request) {
+    try {
+        const { searchParams } = new URL(req.url);
+        const boardId = searchParams.get('boardId');
+
+        if (!boardId) {
+            return NextResponse.json({ error: 'Missing boardId' }, { status: 400 });
+        }
+
+        await prisma.board.delete({ where: { id: boardId } });
+
+        return NextResponse.json({ success: true });
+    } catch (error) {
+        console.error('Delete Board API Error:', error);
+        return NextResponse.json({ error: 'Failed to delete board' }, { status: 500 });
     }
 }
 

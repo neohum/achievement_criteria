@@ -21,6 +21,7 @@ export default function LobbyPage() {
     const [creating, setCreating] = useState(false);
     const [joinCode, setJoinCode] = useState("");
     const [joining, setJoining] = useState(false);
+    const [deletingId, setDeletingId] = useState<string | null>(null);
 
     useEffect(() => {
         let sid = localStorage.getItem("achievement_board_session");
@@ -65,6 +66,28 @@ export default function LobbyPage() {
             setCreating(false);
             setShowNewBoard(false);
             setNewBoardTitle("");
+        }
+    };
+
+    const deleteBoard = async (boardId: string) => {
+        if (deletingId) return;
+        if (!confirm("이 보드를 삭제하시겠습니까? 삭제 후 복구할 수 없습니다.")) return;
+        setDeletingId(boardId);
+
+        try {
+            const res = await fetch(`/api/boards?boardId=${boardId}&sessionId=${sessionId}`, {
+                method: "DELETE",
+            });
+            if (res.ok) {
+                setBoards((prev) => prev.filter((b) => b.id !== boardId));
+                toast.success("보드가 삭제되었습니다.");
+            } else {
+                toast.error("보드 삭제에 실패했습니다.");
+            }
+        } catch {
+            toast.error("보드 삭제에 실패했습니다.");
+        } finally {
+            setDeletingId(null);
         }
     };
 
@@ -169,9 +192,20 @@ export default function LobbyPage() {
                         <div
                             key={board.id}
                             onClick={() => router.push(`/board/${board.id}`)}
-                            className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm hover:shadow-lg hover:-translate-y-1 transition-all cursor-pointer flex flex-col gap-4 group"
+                            className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm hover:shadow-lg hover:-translate-y-1 transition-all cursor-pointer flex flex-col gap-4 group relative"
                         >
-                            <h3 className="text-lg font-bold text-gray-800 group-hover:text-blue-600 transition-colors">
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    deleteBoard(board.id);
+                                }}
+                                disabled={deletingId === board.id}
+                                className="absolute top-4 right-4 w-8 h-8 flex items-center justify-center rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition-all opacity-0 group-hover:opacity-100"
+                                title="보드 삭제"
+                            >
+                                <svg className={`w-4 h-4 ${deletingId === board.id ? "animate-pulse" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                            </button>
+                            <h3 className="text-lg font-bold text-gray-800 group-hover:text-blue-600 transition-colors pr-8">
                                 {board.title}
                             </h3>
                             <div className="text-xs text-gray-400 mt-auto">

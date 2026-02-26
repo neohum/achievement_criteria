@@ -1,9 +1,21 @@
 "use client";
 
-import React, { createContext, useContext, useState, useMemo, useEffect, useRef } from 'react';
-import { AchievementCriteria, BoardCard } from '@/types';
-import { DragDropContext, DropResult } from '@hello-pangea/dnd';
+import React, { createContext, useContext, useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { AchievementCriteria, BoardCard, BoardEdge } from '@/types';
+import { useNodesState, useEdgesState, addEdge, applyEdgeChanges, Connection, Edge, EdgeChange, NodeChange, Node } from '@xyflow/react';
 import { toast } from 'sonner';
+import { useWebSocket } from '@/hooks/useWebSocket';
+
+export interface RemoteCursor {
+    sessionId: string;
+    color: string;
+    x: number;
+    y: number;
+    dragging?: boolean;
+    dragCardId?: string;
+    dragCardTitle?: string;
+    lastUpdate: number;
+}
 
 interface BoardContextType {
     boardId: string;
@@ -18,12 +30,23 @@ interface BoardContextType {
     availableSubjects: string[];
     availableDomains: string[];
     filteredCriteria: AchievementCriteria[];
-    boardCards: BoardCard[];
-    setBoardCards: React.Dispatch<React.SetStateAction<BoardCard[]>>;
+    nodes: Node[];
+    edges: Edge[];
+    onNodesChange: (changes: NodeChange[]) => void;
+    onEdgesChange: (changes: EdgeChange[]) => void;
+    onConnect: (connection: Connection) => void;
+    setNodes: React.Dispatch<React.SetStateAction<Node[]>>;
+    setEdges: React.Dispatch<React.SetStateAction<Edge[]>>;
     updateMemo: (id: string, memo: string) => void;
-    removeCard: (id: string) => void;
+    removeNode: (id: string) => void;
     saveStatus: 'idle' | 'saving' | 'saved' | 'error';
     activeUsers: string[];
+    remoteCursors: Map<string, RemoteCursor>;
+    myColor: string;
+    sendCursorPosition: (flowX: number, flowY: number) => void;
+    sendDragStart: (cardId: string, cardTitle: string) => void;
+    sendDragEnd: () => void;
+    isWsConnected: boolean;
 }
 
 const BoardContext = createContext<BoardContextType | undefined>(undefined);
@@ -39,16 +62,205 @@ export function BoardProvider({ children, initialCriteria, boardId }: { children
     const [gradeGroupFilter, setGradeGroupFilter] = useState("");
     const [subjectFilter, setSubjectFilter] = useState("");
     const [domainFilter, setDomainFilter] = useState("");
-    const [boardCards, setBoardCards] = useState<BoardCard[]>([]);
+
+    // React Flow state
+    const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
+    const [edges, setEdges] = useEdgesState<Edge>([]);
+
     const [isMounted, setIsMounted] = useState(false);
     const [sessionId, setSessionId] = useState<string>('');
     const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
     const [activeUsers, setActiveUsers] = useState<string[]>([]);
-    const ignoreNextSave = useRef(false);
+    const [remoteCursors, setRemoteCursors] = useState<Map<string, RemoteCursor>>(new Map());
+    const [myColor, setMyColor] = useState<string>('#3b82f6');
+    // Timestamp of last remote update — skip autosave within this window
+    const lastRemoteUpdateRef = useRef(0);
+
+    // Throttle ref for cursor position
+    const lastCursorSendRef = useRef(0);
+
+    // Update sequence numbers for all edges whenever edges change
+    const updateEdgeSequences = useCallback((currentEdges: Edge[]) => {
+        return currentEdges.map((e, index) => ({
+            ...e,
+            data: { ...e.data, sequenceNumber: index + 1 }
+        }));
+    }, []);
+
+    // Apply edge changes + sequencing atomically in one setEdges call (no cascading effect)
+    const onEdgesChange = useCallback((changes: EdgeChange[]) => {
+        setEdges((eds) => {
+            const updated = applyEdgeChanges(changes, eds);
+            return updateEdgeSequences(updated);
+        });
+    }, [setEdges, updateEdgeSequences]);
+
+    const onConnect = useCallback(
+        (params: Connection) => setEdges((eds) => {
+            // Check if the source handle already has an outgoing connection
+            const sourceLimit = eds.some(e => e.source === params.source && e.sourceHandle === params.sourceHandle);
+            // Check if the target handle already has an incoming connection
+            const targetLimit = eds.some(e => e.target === params.target && e.targetHandle === params.targetHandle);
+
+            if (sourceLimit || targetLimit) {
+                toast.warning("각 연결점은 하나씩만 연결할 수 있습니다.");
+                return eds;
+            }
+
+            const newEdges = addEdge({ ...params, type: 'customEdge' }, eds);
+            return updateEdgeSequences(newEdges);
+        }),
+        [setEdges, updateEdgeSequences]
+    );
+
+    // WebSocket message handler
+    const handleWsMessage = useCallback((msg: any) => {
+        switch (msg.type) {
+            case 'init': {
+                setMyColor(msg.color);
+                const users = (msg.users || []).map((u: any) => u.sessionId);
+                setActiveUsers(users);
+                break;
+            }
+            case 'presence': {
+                const users = (msg.users || []).map((u: any) => u.sessionId);
+                setActiveUsers(users);
+                break;
+            }
+            case 'update': {
+                // Board data update from another user — block autosave for 2s
+                lastRemoteUpdateRef.current = Date.now();
+                if (msg.cards) {
+                    const flowNodes: Node[] = msg.cards.map((c: BoardCard) => ({
+                        id: c.id,
+                        type: 'criteriaNode',
+                        position: c.position || { x: 50, y: 50 },
+                        data: {
+                            criteria: c.criteria,
+                            memo: c.memo || ""
+                        }
+                    }));
+                    setNodes(flowNodes);
+                }
+                if (msg.edges) {
+                    let flowEdges: Edge[] = msg.edges.map((e: BoardEdge) => ({
+                        id: e.id,
+                        source: e.source,
+                        target: e.target,
+                        sourceHandle: e.sourceHandle,
+                        targetHandle: e.targetHandle,
+                        type: 'customEdge'
+                    }));
+                    flowEdges = updateEdgeSequences(flowEdges);
+                    setEdges(flowEdges);
+                }
+                break;
+            }
+            case 'cursor': {
+                setRemoteCursors(prev => {
+                    const next = new Map(prev);
+                    const existing = next.get(msg.sessionId);
+                    next.set(msg.sessionId, {
+                        sessionId: msg.sessionId,
+                        color: msg.color,
+                        x: msg.x,
+                        y: msg.y,
+                        dragging: existing?.dragging || false,
+                        dragCardId: existing?.dragCardId,
+                        dragCardTitle: existing?.dragCardTitle,
+                        lastUpdate: Date.now(),
+                    });
+                    return next;
+                });
+                break;
+            }
+            case 'drag-start': {
+                setRemoteCursors(prev => {
+                    const next = new Map(prev);
+                    const existing = next.get(msg.sessionId);
+                    if (existing) {
+                        next.set(msg.sessionId, {
+                            ...existing,
+                            dragging: true,
+                            dragCardId: msg.cardId,
+                            dragCardTitle: msg.cardTitle,
+                            lastUpdate: Date.now(),
+                        });
+                    }
+                    return next;
+                });
+                break;
+            }
+            case 'drag-end': {
+                setRemoteCursors(prev => {
+                    const next = new Map(prev);
+                    const existing = next.get(msg.sessionId);
+                    if (existing) {
+                        next.set(msg.sessionId, {
+                            ...existing,
+                            dragging: false,
+                            dragCardId: undefined,
+                            dragCardTitle: undefined,
+                            lastUpdate: Date.now(),
+                        });
+                    }
+                    return next;
+                });
+                break;
+            }
+            case 'cursor-leave': {
+                setRemoteCursors(prev => {
+                    const next = new Map(prev);
+                    next.delete(msg.sessionId);
+                    return next;
+                });
+                break;
+            }
+        }
+    }, [setNodes, setEdges, updateEdgeSequences]);
+
+    const { send, isConnected: isWsConnected } = useWebSocket({
+        boardId,
+        sessionId,
+        onMessage: handleWsMessage,
+    });
+
+    const sendCursorPosition = useCallback((flowX: number, flowY: number) => {
+        const now = Date.now();
+        if (now - lastCursorSendRef.current < 50) return; // 50ms throttle
+        lastCursorSendRef.current = now;
+        send({ type: 'cursor', x: flowX, y: flowY });
+    }, [send]);
+
+    const sendDragStart = useCallback((cardId: string, cardTitle: string) => {
+        send({ type: 'drag-start', cardId, cardTitle });
+    }, [send]);
+
+    const sendDragEnd = useCallback(() => {
+        send({ type: 'drag-end' });
+    }, [send]);
+
+    // Stale cursor cleanup (10 seconds)
+    useEffect(() => {
+        const interval = setInterval(() => {
+            setRemoteCursors(prev => {
+                const now = Date.now();
+                let changed = false;
+                const next = new Map(prev);
+                for (const [sid, cursor] of next) {
+                    if (now - cursor.lastUpdate > 10000) {
+                        next.delete(sid);
+                        changed = true;
+                    }
+                }
+                return changed ? next : prev;
+            });
+        }, 5000);
+        return () => clearInterval(interval);
+    }, []);
 
     useEffect(() => {
         setIsMounted(true);
-        // We still fetch sessionId if needed, but mainly rely on boardId
         let sid = localStorage.getItem('achievement_board_session');
         if (!sid) {
             sid = `sess-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -61,50 +273,69 @@ export function BoardProvider({ children, initialCriteria, boardId }: { children
             .then(res => res.json())
             .then(data => {
                 if (data.cards && data.cards.length > 0) {
-                    ignoreNextSave.current = true;
-                    setBoardCards(data.cards);
+                    lastRemoteUpdateRef.current = Date.now();
+                    const flowNodes: Node[] = data.cards.map((c: BoardCard, index: number) => ({
+                        id: c.id,
+                        type: 'criteriaNode',
+                        position: c.position || { x: 50, y: 50 + index * 100 },
+                        data: {
+                            criteria: c.criteria,
+                            memo: c.memo || ""
+                        }
+                    }));
+                    setNodes(flowNodes);
+                }
+
+                if (data.edges && data.edges.length > 0) {
+                    lastRemoteUpdateRef.current = Date.now();
+                    let flowEdges: Edge[] = data.edges.map((e: BoardEdge) => ({
+                        id: e.id,
+                        source: e.source,
+                        target: e.target,
+                        sourceHandle: e.sourceHandle,
+                        targetHandle: e.targetHandle,
+                        type: 'customEdge'
+                    }));
+                    flowEdges = updateEdgeSequences(flowEdges);
+                    setEdges(flowEdges);
                 }
             })
             .catch(() => toast.error("보드 데이터를 불러오는데 실패했습니다."));
 
-        // Setup SSE for real-time sync with presence
-        const eventSource = new EventSource(`/api/board/stream?boardId=${boardId}&sessionId=${sid}`);
-        eventSource.onmessage = (event) => {
-            try {
-                const data = JSON.parse(event.data);
-                if (data.type === 'update' && data.sessionId !== sid) {
-                    // Update from another user
-                    ignoreNextSave.current = true;
-                    setBoardCards(data.cards);
-                } else if (data.type === 'presence') {
-                    // Update active users
-                    setActiveUsers(data.users || []);
-                }
-            } catch (err) {
-                console.error("SSE parse error", err);
-            }
-        };
-
-        return () => {
-            eventSource.close();
-        };
-    }, [boardId]);
+        // SSE is no longer needed — WebSocket handles real-time sync
+    }, [boardId, setNodes, setEdges, updateEdgeSequences]);
 
     // Autosave effect with debounce
     useEffect(() => {
         if (!isMounted || !boardId || !sessionId) return;
 
-        if (ignoreNextSave.current) {
-            ignoreNextSave.current = false;
-            return;
-        }
+        // Skip save if this change came from a remote update (within 2s window)
+        if (Date.now() - lastRemoteUpdateRef.current < 2000) return;
 
         setSaveStatus('saving');
         const timer = setTimeout(() => {
+            // Double-check before actually saving — remote update may have arrived during debounce
+            if (Date.now() - lastRemoteUpdateRef.current < 2000) return;
+            // Convert to DB format
+            const boardCards: BoardCard[] = nodes.map(n => ({
+                id: n.id,
+                position: n.position,
+                criteria: n.data.criteria as AchievementCriteria,
+                memo: (n.data.memo as string) || ""
+            }));
+
+            const boardEdges: BoardEdge[] = edges.map(e => ({
+                id: e.id,
+                source: e.source,
+                target: e.target,
+                sourceHandle: e.sourceHandle,
+                targetHandle: e.targetHandle
+            }));
+
             fetch('/api/board', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ boardId, sessionId, cards: boardCards })
+                body: JSON.stringify({ boardId, sessionId, cards: boardCards, edges: boardEdges })
             })
                 .then(res => {
                     if (res.ok) setSaveStatus('saved');
@@ -120,7 +351,7 @@ export function BoardProvider({ children, initialCriteria, boardId }: { children
         }, 1000); // 1s debounce
 
         return () => clearTimeout(timer);
-    }, [boardCards, sessionId, isMounted]);
+    }, [nodes, edges, sessionId, isMounted]);
 
     const availableGradeGroups = useMemo(() => {
         const groups = new Set<string>();
@@ -170,52 +401,15 @@ export function BoardProvider({ children, initialCriteria, boardId }: { children
     }, [subjectFilter]);
 
     const updateMemo = (id: string, memo: string) => {
-        setBoardCards(prev => prev.map(c => c.id === id ? { ...c, memo } : c));
+        setNodes(prev => prev.map(n => n.id === id ? { ...n, data: { ...n.data, memo } } : n));
     };
 
-    const removeCard = (id: string) => {
-        setBoardCards(prev => prev.filter(c => c.id !== id));
+    const removeNode = (id: string) => {
+        setNodes(prev => prev.filter(n => n.id !== id));
+        setEdges(prev => prev.filter(e => e.source !== id && e.target !== id));
     };
 
-    const onDragEnd = (result: DropResult) => {
-        const { source, destination } = result;
-        if (!destination) return; // Dropped outside
-
-        // Reordering within the main board
-        if (source.droppableId === 'main-board' && destination.droppableId === 'main-board') {
-            const newCards = Array.from(boardCards);
-            const [movedCard] = newCards.splice(source.index, 1);
-            newCards.splice(destination.index, 0, movedCard);
-            setBoardCards(newCards);
-            return;
-        }
-
-        // Dragging from main board to trash
-        if (source.droppableId === 'main-board' && destination.droppableId === 'trash') {
-            const newCards = Array.from(boardCards);
-            newCards.splice(source.index, 1);
-            setBoardCards(newCards);
-            return;
-        }
-
-        // Dragging from sidebar to main board
-        if (source.droppableId === 'sidebar-list' && destination.droppableId === 'main-board') {
-            const sourceCriteria = filteredCriteria[source.index];
-            if (sourceCriteria) {
-                const newCard: BoardCard = {
-                    id: `card-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-                    criteria: sourceCriteria,
-                    memo: ""
-                };
-                const newCards = Array.from(boardCards);
-                newCards.splice(destination.index, 0, newCard);
-                setBoardCards(newCards);
-            }
-            return;
-        }
-    };
-
-    if (!isMounted) return null; // Avoid hydration mismatch on DragDropContext
+    if (!isMounted) return null;
 
     return (
         <BoardContext.Provider value={{
@@ -228,13 +422,16 @@ export function BoardProvider({ children, initialCriteria, boardId }: { children
             availableSubjects,
             availableDomains,
             filteredCriteria,
-            boardCards, setBoardCards,
-            updateMemo, removeCard,
-            saveStatus, activeUsers
+            nodes, edges,
+            onNodesChange, onEdgesChange, onConnect,
+            setNodes, setEdges,
+            updateMemo, removeNode,
+            saveStatus, activeUsers,
+            remoteCursors, myColor,
+            sendCursorPosition, sendDragStart, sendDragEnd,
+            isWsConnected,
         }}>
-            <DragDropContext onDragEnd={onDragEnd}>
-                {children}
-            </DragDropContext>
+            {children}
         </BoardContext.Provider>
     );
 }

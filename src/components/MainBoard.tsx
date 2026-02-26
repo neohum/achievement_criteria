@@ -1,121 +1,130 @@
 "use client";
 
-import React from 'react';
+import React, { useRef, useCallback } from 'react';
 import { useBoard } from '@/contexts/BoardContext';
-import { Droppable, Draggable } from '@hello-pangea/dnd';
+import {
+    ReactFlow,
+    Controls,
+    Background,
+    BackgroundVariant,
+    useReactFlow,
+    type OnNodeDrag,
+    type Node,
+} from '@xyflow/react';
+import '@xyflow/react/dist/style.css';
+import CriteriaNode from '@/components/CriteriaNode';
+import CustomEdge from '@/components/CustomEdge';
+import CursorOverlay from '@/components/CursorOverlay';
+import { AchievementCriteria } from '@/types';
+
+const nodeTypes = {
+    criteriaNode: CriteriaNode,
+};
+
+const edgeTypes = {
+    customEdge: CustomEdge,
+};
 
 export default function MainBoard() {
-    const { boardCards, updateMemo, removeCard } = useBoard();
+    const { nodes, edges, onNodesChange, onEdgesChange, onConnect, setNodes, sendCursorPosition, sendDragStart, sendDragEnd } = useBoard();
+    const reactFlowWrapper = useRef<HTMLDivElement>(null);
+    const { screenToFlowPosition } = useReactFlow();
+
+    const onDragOver = useCallback((event: React.DragEvent) => {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+    }, []);
+
+    const onDrop = useCallback(
+        (event: React.DragEvent) => {
+            event.preventDefault();
+
+            const criteriaStr = event.dataTransfer.getData('application/reactflow-criteria');
+
+            if (!criteriaStr) return;
+
+            const criteria = JSON.parse(criteriaStr);
+
+            const position = screenToFlowPosition({
+                x: event.clientX - 150,
+                y: event.clientY - 50,
+            });
+
+            const newNode = {
+                id: `card-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+                type: 'criteriaNode',
+                position,
+                data: { criteria, memo: "" },
+            };
+
+            setNodes((nds) => nds.concat(newNode));
+        },
+        [setNodes, screenToFlowPosition]
+    );
+
+    const onMouseMove = useCallback((event: React.MouseEvent) => {
+        const flowPos = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+        sendCursorPosition(flowPos.x, flowPos.y);
+    }, [screenToFlowPosition, sendCursorPosition]);
+
+    const onNodeDragStart: OnNodeDrag<Node> = useCallback((_event, node) => {
+        const criteria = node.data?.criteria as AchievementCriteria | undefined;
+        const title = criteria?.description || criteria?.code || node.id;
+        sendDragStart(node.id, title);
+    }, [sendDragStart]);
+
+    const onNodeDragStop: OnNodeDrag<Node> = useCallback(() => {
+        sendDragEnd();
+    }, [sendDragEnd]);
 
     return (
-        <main className="flex-1 bg-gray-100 p-4 md:p-8 overflow-y-auto relative h-[55%] md:h-auto">
-            <div className="max-w-4xl mx-auto min-h-[50vh] md:min-h-[80vh] bg-white/50 backdrop-blur border border-dashed border-gray-300 rounded-2xl p-4 md:p-6 flex flex-col">
-                <h2 className="text-lg md:text-xl font-bold text-gray-800 mb-4 md:mb-6 flex items-center gap-2">
+        <main className="flex-1 bg-gray-100 p-0 md:p-4 overflow-hidden relative h-[55%] md:h-auto flex flex-col">
+            <div className="w-full flex justify-between items-center px-4 py-2 bg-white/50 backdrop-blur border-b border-gray-200 z-10 shrink-0">
+                <h2 className="text-lg md:text-xl font-bold text-gray-800 flex items-center gap-2">
                     <span>🎯</span> 내 성취기준 보드
-                    <span className="text-xs md:text-sm font-normal text-gray-500 ml-1 md:ml-2">({boardCards.length}개)</span>
+                    <span className="text-xs md:text-sm font-normal text-gray-500 ml-1 md:ml-2">({nodes.length}개)</span>
                 </h2>
 
-                <Droppable droppableId="main-board">
-                    {(provided, snapshot) => (
-                        <div
-                            {...provided.droppableProps}
-                            ref={provided.innerRef}
-                            className={`flex-1 flex flex-col gap-4 rounded-xl transition-colors ${snapshot.isDraggingOver ? 'bg-blue-50/50' : ''}`}
-                        >
-                            {boardCards.length === 0 ? (
-                                <div className="w-full border-2 border-dashed border-gray-300 rounded-xl h-40 flex flex-col items-center justify-center text-gray-400 font-medium bg-gray-50/50">
-                                    <span className="text-3xl mb-2">📥</span>
-                                    오른쪽에서 카드를 드래그하여 이곳에 배치하세요.
-                                </div>
-                            ) : (
-                                boardCards.map((card, index) => (
-                                    <Draggable key={card.id} draggableId={card.id} index={index}>
-                                        {(provided, snapshot) => (
-                                            <div
-                                                ref={provided.innerRef}
-                                                {...provided.draggableProps}
-                                                className={`bg-white rounded-xl border border-gray-200 shadow-sm p-4 md:p-5 flex flex-col gap-2 md:gap-3 relative group
-                                                    ${snapshot.isDragging ? 'shadow-2xl ring-2 ring-blue-500 scale-[1.02] z-50' : 'hover:shadow-md'}
-                                                `}
-                                            >
-                                                {/* Drag Handle & Delete Button */}
-                                                <div className="flex items-center justify-between">
-                                                    <div
-                                                        {...provided.dragHandleProps}
-                                                        className="flex items-center gap-2 cursor-grab text-gray-400 hover:text-gray-600 transition-colors py-1"
-                                                    >
-                                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                                            <line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line>
-                                                        </svg>
-                                                        <div className="flex items-center gap-1.5 md:gap-2 flex-wrap">
-                                                            <span className="px-1.5 md:px-2 py-1 bg-gray-100 text-gray-600 rounded text-[10px] md:text-xs font-semibold">{card.criteria.gradeGroup}</span>
-                                                            <span className="px-1.5 md:px-2 py-1 bg-gray-100 text-gray-600 rounded text-[10px] md:text-xs font-semibold">{card.criteria.subject}</span>
-                                                            <span className="px-1.5 md:px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-[10px] md:text-xs font-bold">{card.criteria.code}</span>
+                <div className="text-xs text-gray-500 flex gap-4">
+                    <span>드래그로 이동</span>
+                    <span>핸들 드래그로 선 연결</span>
+                    <span>선 선택 후 Backspace로 삭제</span>
+                </div>
+            </div>
 
-                                                            {/* Usage Count Badge on the board card */}
-                                                            {(() => {
-                                                                const count = boardCards.filter(c => c.criteria.code === card.criteria.code).length;
-                                                                if (count > 1) {
-                                                                    // To identify its specific sequence among duplicates, we can map through boardCards up to this index
-                                                                    const thisOccurence = boardCards.filter((c, i) => i <= index && c.criteria.code === card.criteria.code).length;
-                                                                    return (
-                                                                        <span className="px-1.5 md:px-2 py-0.5 bg-slate-800 text-white rounded-full text-[10px] md:text-xs font-bold shadow-sm">
-                                                                            {thisOccurence} / {count}번
-                                                                        </span>
-                                                                    );
-                                                                }
-                                                                return null;
-                                                            })()}
-                                                        </div>
-                                                    </div>
-                                                    <button
-                                                        onClick={() => removeCard(card.id)}
-                                                        className="w-8 h-8 flex items-center justify-center rounded-full bg-red-50 text-red-500 md:opacity-0 group-hover:opacity-100 hover:bg-red-100 transition-all shrink-0"
-                                                        title="삭제"
-                                                    >
-                                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-                                                    </button>
-                                                </div>
-
-                                                {/* Description */}
-                                                <div className="text-sm md:text-base text-gray-800 font-medium pl-1 md:pl-7">
-                                                    {card.criteria.description}
-                                                </div>
-
-                                                {/* Memo area */}
-                                                <div className="pl-1 md:pl-7 mt-1 md:mt-2">
-                                                    <textarea
-                                                        value={card.memo}
-                                                        onChange={(e) => updateMemo(card.id, e.target.value)}
-                                                        placeholder="이 성취기준에 대한 메모를 입력하세요 (예: 4월 2주차 1차시 수업 적용)"
-                                                        className="w-full text-sm bg-yellow-50/50 border border-yellow-200 rounded-lg p-3 min-h-[60px] resize-y focus:outline-none focus:ring-2 focus:ring-yellow-400 placeholder:text-yellow-700/40"
-                                                    />
-                                                </div>
-                                            </div>
-                                        )}
-                                    </Draggable>
-                                ))
-                            )}
-                            {provided.placeholder}
+            <div className="flex-1 w-full h-full relative" ref={reactFlowWrapper}>
+                <ReactFlow
+                    nodes={nodes}
+                    edges={edges}
+                    onNodesChange={onNodesChange}
+                    onEdgesChange={onEdgesChange}
+                    onConnect={onConnect}
+                    nodeTypes={nodeTypes}
+                    edgeTypes={edgeTypes}
+                    onDragOver={onDragOver}
+                    onDrop={onDrop}
+                    onMouseMove={onMouseMove}
+                    onNodeDragStart={onNodeDragStart}
+                    onNodeDragStop={onNodeDragStop}
+                    fitView
+                    fitViewOptions={{ padding: 0.2 }}
+                    minZoom={0.2}
+                    colorMode="light"
+                    className="bg-gray-50/50"
+                >
+                    <Background variant={BackgroundVariant.Dots} gap={24} size={1} />
+                    <Controls />
+                    <CursorOverlay />
+                </ReactFlow>
+                {nodes.length === 0 && (
+                    <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center text-gray-400 font-medium z-10 bg-white/30 backdrop-blur-sm">
+                        <span className="text-4xl mb-3">📥</span>
+                        <div className="bg-white/80 px-6 py-4 rounded-2xl shadow-sm border border-gray-200 text-center pointer-events-auto">
+                            오른쪽 패널에서 성취기준 카드를 <br />
+                            <span className="text-blue-500 font-bold">드래그하여 이곳에 배치</span>하세요.
                         </div>
-                    )}
-                </Droppable>
-
-                {/* Trash Zone */}
-                <Droppable droppableId="trash">
-                    {(provided, snapshot) => (
-                        <div
-                            {...provided.droppableProps}
-                            ref={provided.innerRef}
-                            className={`mt-8 h-20 rounded-xl border-2 border-dashed flex items-center justify-center transition-colors
-                ${snapshot.isDraggingOver ? 'bg-red-500/10 border-red-500 text-red-600' : 'border-transparent text-transparent bg-transparent'}
-              `}
-                        >
-                            <span className="text-sm font-bold tracking-wider">이곳으로 드래그하여 삭제</span>
-                            <div className="hidden">{provided.placeholder}</div>
-                        </div>
-                    )}
-                </Droppable>
+                    </div>
+                )}
             </div>
         </main>
     );
