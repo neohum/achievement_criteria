@@ -47,10 +47,25 @@ export default function MainBoard() {
                                                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                                             <line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line>
                                                         </svg>
-                                                        <div className="flex items-center gap-2">
-                                                            <span className="px-2 py-1 bg-gray-100 text-gray-600 rounded text-xs font-semibold">{card.criteria.gradeGroup}</span>
-                                                            <span className="px-2 py-1 bg-gray-100 text-gray-600 rounded text-xs font-semibold">{card.criteria.subject}</span>
-                                                            <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-bold">{card.criteria.code}</span>
+                                                        <div className="flex items-center gap-1.5 md:gap-2 flex-wrap">
+                                                            <span className="px-1.5 md:px-2 py-1 bg-gray-100 text-gray-600 rounded text-[10px] md:text-xs font-semibold">{card.criteria.gradeGroup}</span>
+                                                            <span className="px-1.5 md:px-2 py-1 bg-gray-100 text-gray-600 rounded text-[10px] md:text-xs font-semibold">{card.criteria.subject}</span>
+                                                            <span className="px-1.5 md:px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-[10px] md:text-xs font-bold">{card.criteria.code}</span>
+
+                                                            {/* Usage Count Badge on the board card */}
+                                                            {(() => {
+                                                                const count = boardCards.filter(c => c.criteria.code === card.criteria.code).length;
+                                                                if (count > 1) {
+                                                                    // To identify its specific sequence among duplicates, we can map through boardCards up to this index
+                                                                    const thisOccurence = boardCards.filter((c, i) => i <= index && c.criteria.code === card.criteria.code).length;
+                                                                    return (
+                                                                        <span className="px-1.5 md:px-2 py-0.5 bg-slate-800 text-white rounded-full text-[10px] md:text-xs font-bold shadow-sm">
+                                                                            {thisOccurence} / {count}번
+                                                                        </span>
+                                                                    );
+                                                                }
+                                                                return null;
+                                                            })()}
                                                         </div>
                                                     </div>
                                                     <button

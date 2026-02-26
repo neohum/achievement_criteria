@@ -69,13 +69,16 @@ export default function TopBar() {
     }
   };
 
-  // Generate QR code when shareCode is available and modal is open
+  // Generate QR code sized to fit the modal width
   useEffect(() => {
     if (showShareModal && shareCode && canvasRef.current) {
       const boardUrl = `${window.location.origin}/board/${boardId}`;
+      // Use parent container width for responsive sizing
+      const container = canvasRef.current.parentElement;
+      const size = container ? container.clientWidth : 300;
       QRCode.toCanvas(canvasRef.current, boardUrl, {
-        width: 200,
-        margin: 2,
+        width: size,
+        margin: 1,
         color: { dark: "#1e293b", light: "#ffffff" },
       });
     }
@@ -164,46 +167,46 @@ export default function TopBar() {
         </div>
       </header>
 
-      {/* Share Modal */}
+      {/* Share Modal — fullscreen */}
       {showShareModal && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[100] px-4">
-          <div ref={modalRef} className="bg-white rounded-2xl shadow-2xl p-6 md:p-8 w-full max-w-sm flex flex-col items-center gap-5">
+        <div className="fixed inset-0 bg-white z-[100] flex flex-col">
+          {/* Top bar */}
+          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 shrink-0">
             <h2 className="text-lg font-bold text-gray-800">보드 공유</h2>
-
-            {shareLoading ? (
-              <div className="py-10 text-gray-400 animate-pulse">접속번호 생성 중...</div>
-            ) : shareCode ? (
-              <>
-                {/* QR Code */}
-                <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
-                  <canvas ref={canvasRef} />
-                </div>
-
-                {/* Access Code */}
-                <div className="text-center">
-                  <p className="text-xs text-gray-500 mb-1">접속번호</p>
-                  <p className="text-3xl font-mono font-bold tracking-[0.3em] text-gray-900">
-                    {shareCode}
-                  </p>
-                </div>
-
-                {/* Copy Button */}
-                <button
-                  onClick={copyShareInfo}
-                  className="w-full py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition"
-                >
-                  공유 정보 복사
-                </button>
-              </>
-            ) : null}
-
             <button
               onClick={() => setShowShareModal(false)}
-              className="text-sm text-gray-400 hover:text-gray-600 transition"
+              className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-gray-100 transition text-gray-500 text-xl"
             >
-              닫기
+              &times;
             </button>
           </div>
+
+          {shareLoading ? (
+            <div className="flex-1 flex items-center justify-center text-gray-400 animate-pulse">접속번호 생성 중...</div>
+          ) : shareCode ? (
+            <div ref={modalRef} className="flex-1 flex flex-col items-center px-4 py-6 overflow-auto">
+              {/* QR Code — fills width */}
+              <div className="w-full max-w-md">
+                <canvas ref={canvasRef} className="w-full h-auto" />
+              </div>
+
+              {/* Access Code */}
+              <div className="text-center mt-6">
+                <p className="text-xs text-gray-500 mb-1">접속번호</p>
+                <p className="text-4xl md:text-5xl font-mono font-bold tracking-[0.3em] text-gray-900">
+                  {shareCode}
+                </p>
+              </div>
+
+              {/* Copy Button */}
+              <button
+                onClick={copyShareInfo}
+                className="mt-6 w-full max-w-md py-3 bg-blue-600 text-white rounded-xl text-base font-medium hover:bg-blue-700 transition"
+              >
+                공유 정보 복사
+              </button>
+            </div>
+          ) : null}
         </div>
       )}
     </>

@@ -57,3 +57,7 @@
   - [x] `npx prisma db push` 실행으로 DB 테이블 생성
   - [x] 기존 구글 시트 데이터를 1회 파싱하여 DB에 저장하는 Seed 로직(또는 임시 API Route) 구현하고 실행
   - [x] `src/utils/fetchData.ts` 코드를 Google Sheet Fetch 방식에서 `prisma.achievementCriteria.findMany()` 방식(DB 조회)으로 전면 교체
+
+- [x] Phase 11: 실시간 성취기준 사용 횟수(Usage Count) 뱃지 표시
+  - [x] `Sidebar.tsx`: 현재 선택된 성취기준이 보드에 몇 번 올라갔는지 계산하여 우측 상단 뱃지로 시각화
+  - [x] `MainBoard.tsx`: 보드에 중복 배치된 성취기준에 한하여, '현재 순번 / 전체 사용 횟수'를 배지에 추가로 명시

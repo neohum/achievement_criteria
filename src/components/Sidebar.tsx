@@ -12,7 +12,8 @@ export default function Sidebar() {
         availableGradeGroups,
         availableSubjects,
         availableDomains,
-        filteredCriteria
+        filteredCriteria,
+        boardCards
     } = useBoard();
 
     return (
@@ -81,26 +82,39 @@ export default function Sidebar() {
                                     조건을 선택해주세요.
                                 </div>
                             ) : (
-                                filteredCriteria.map((item, index) => (
-                                    <Draggable key={`${item.code}-${index}`} draggableId={`sidebar-${item.code}-${index}`} index={index}>
-                                        {(provided, snapshot) => (
-                                            <div
-                                                ref={provided.innerRef}
-                                                {...provided.draggableProps}
-                                                {...provided.dragHandleProps}
-                                                className={`p-4 bg-white rounded-lg border border-gray-200 cursor-grab hover:shadow-md transition-shadow relative
-                          ${snapshot.isDragging ? 'shadow-xl rotate-1 scale-105 z-50 ring-2 ring-blue-400 border-transparent' : 'shadow-sm'}
-                        `}
-                                            >
-                                                <div className="flex items-center justify-between mb-1">
-                                                    <div className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-sm">{item.code}</div>
-                                                    <div className="text-[10px] text-gray-400 whitespace-nowrap overflow-hidden text-ellipsis max-w-[80px]" title={item.domain}>{item.domain}</div>
+                                filteredCriteria.map((item, index) => {
+                                    const usageCount = boardCards.filter(c => c.criteria.code === item.code).length;
+
+                                    return (
+                                        <Draggable key={`${item.code}-${index}`} draggableId={`sidebar-${item.code}-${index}`} index={index}>
+                                            {(provided, snapshot) => (
+                                                <div
+                                                    ref={provided.innerRef}
+                                                    {...provided.draggableProps}
+                                                    {...provided.dragHandleProps}
+                                                    className={`p-4 bg-white rounded-lg border cursor-grab transition-all relative
+                            ${snapshot.isDragging ? 'shadow-xl rotate-1 scale-105 z-50 ring-2 ring-blue-400 border-transparent' : 'shadow-sm hover:shadow-md border-gray-200'}
+                            ${usageCount > 0 ? 'bg-blue-50/30 border-blue-100' : ''}
+                          `}
+                                                >
+                                                    {usageCount > 0 && (
+                                                        <div className="absolute -top-2 -right-2 flex items-center justify-center min-w-[1.5rem] h-6 px-1.5 bg-blue-600 text-white rounded-full text-xs font-bold shadow-sm z-10 border-2 border-white" title={`${usageCount}번 사용됨`}>
+                                                            {usageCount}
+                                                        </div>
+                                                    )}
+                                                    <div className="flex items-center justify-between mb-1 gap-2">
+                                                        <div className="flex items-center gap-1.5 overflow-hidden">
+                                                            <div className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-sm shrink-0">{item.code}</div>
+                                                            {usageCount > 0 && <div className="text-[10px] font-medium text-blue-600 px-1.5 py-0.5 bg-blue-100 rounded-sm shrink-0">사용됨</div>}
+                                                        </div>
+                                                        <div className="text-[10px] text-gray-400 whitespace-nowrap overflow-hidden text-ellipsis max-w-[80px] shrink-0" title={item.domain}>{item.domain}</div>
+                                                    </div>
+                                                    <p className="text-sm text-gray-700 font-medium leading-snug break-keep mt-1">{item.description}</p>
                                                 </div>
-                                                <p className="text-sm text-gray-700 font-medium leading-snug break-keep">{item.description}</p>
-                                            </div>
-                                        )}
-                                    </Draggable>
-                                ))
+                                            )}
+                                        </Draggable>
+                                    );
+                                })
                             )}
                             {provided.placeholder}
                         </div>
