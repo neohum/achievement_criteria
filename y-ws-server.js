@@ -17,6 +17,25 @@ function getRoom(roomName) {
   const doc = new Y.Doc();
   const awareness = new awarenessProtocol.Awareness(doc);
 
+  // Single room-level handler: broadcast doc updates to all conns except the origin
+  doc.on("update", (update, origin) => {
+    const room = rooms.get(roomName);
+    if (!room) return;
+
+    const encoder = encoding.createEncoder();
+    encoding.writeVarUint(encoder, messageSync);
+    syncProtocol.writeUpdate(encoder, update);
+    const msg = encoding.toUint8Array(encoder);
+
+    for (const [conn] of room.conns) {
+      // origin is the ws that sent this update — skip echoing back to sender
+      if (conn !== origin && conn.readyState === 1) {
+        conn.send(msg);
+      }
+    }
+  });
+
+  // Single room-level handler: broadcast awareness updates to all conns
   awareness.on("update", (/** @type {{ added: number[], updated: number[], removed: number[] }} */ changes) => {
     const room = rooms.get(roomName);
     if (!room) return;
@@ -84,21 +103,6 @@ function handleConnection(ws, req) {
     }
   }
 
-  // Listen for doc updates and broadcast to all other conns in the room
-  const onDocUpdate = (update, origin) => {
-    if (origin === ws) return; // don't echo back to sender
-    const encoder = encoding.createEncoder();
-    encoding.writeVarUint(encoder, messageSync);
-    syncProtocol.writeUpdate(encoder, update);
-    const msg = encoding.toUint8Array(encoder);
-    for (const [conn] of room.conns) {
-      if (conn !== ws && conn.readyState === 1) {
-        conn.send(msg);
-      }
-    }
-  };
-  room.doc.on("update", onDocUpdate);
-
   // Track awareness clientIDs from the awareness 'change' event
   // When applyAwarenessUpdate is called with `ws` as origin, added/updated IDs belong to this conn
   const onAwarenessChange = (changes, origin) => {
@@ -119,6 +123,8 @@ function handleConnection(ws, req) {
         case messageSync: {
           const encoder = encoding.createEncoder();
           encoding.writeVarUint(encoder, messageSync);
+          // Pass `ws` as transactionOrigin so the room-level doc update handler
+          // knows which connection to skip when broadcasting
           syncProtocol.readSyncMessage(decoder, encoder, room.doc, ws);
           const reply = encoding.toUint8Array(encoder);
           // Only send if there's content beyond the message type marker
@@ -142,7 +148,6 @@ function handleConnection(ws, req) {
   });
 
   ws.on("close", () => {
-    room.doc.off("update", onDocUpdate);
     room.awareness.off("change", onAwarenessChange);
 
     // Remove awareness states for all clientIDs tracked by this connection
